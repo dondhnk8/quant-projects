@@ -1,5 +1,5 @@
 import yfinance as yf
-"""
+
 aapl = yf.Ticker("AAPL")
 aapl_pnow = aapl.info["currentPrice"]
 print(f"AAPL current price: ${aapl_pnow}")
@@ -14,4 +14,4 @@ print(nvda_mcap_tr)
 print(round(nvda_mcap/1_000_000_000_000, 2))
 print(round(nvda.info["marketCap"]/1_000_000_000_000, 2))
 print(round(yf.Ticker("NVDA").info["marketCap"]/1_000_000_000_000, 2))
-"""
+
