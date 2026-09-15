@@ -60,6 +60,17 @@ def get_historical_volatility(ticker_symbol):
     return historical_volatility
 
 
+def get_price_history(ticker_symbol, period="5d", interval="30m"):
+    """
+    Fetches recent closing prices for the sparkline chart. 30-minute
+    intervals over 5 days gives a reasonably smooth line without
+    pulling an excessive number of data points.
+    """
+    hist = yf.download(ticker_symbol, period=period, interval=interval, progress=False)
+    closes = hist["Close"].values.flatten()
+    return closes
+
+
 def black_scholes_price(S, K, T, r, sigma, option_type):
     """
     The Black-Scholes formula itself.
@@ -94,10 +105,12 @@ TEXT = "#e6e8ef"        # primary text color
 TEXT_DIM = "#8c92a4"    # secondary/muted text (labels, captions)
 ERROR = "#ff5c5c"       # red, used for errors and negative differences
 GOOD = "#3ddc84"        # green, used for positive differences
+GRID = "#333846"        # faint gridlines on the sparkline chart
 FONT = ("Helvetica Neue", 13)
 FONT_BOLD = ("Helvetica Neue", 13, "bold")
 FONT_LARGE = ("Helvetica Neue", 22, "bold")
 FONT_HEADING = ("Helvetica Neue", 12, "bold")
+FONT_SMALL = ("Helvetica Neue", 8)
 
 
 class OptionsPricerApp:
@@ -116,7 +129,7 @@ class OptionsPricerApp:
         self._setup_style()
 
         # ============================================================
-        # Top control bar: ticker entry, Call/Put, expiration, stock price
+        # Top control bar: ticker entry, Call/Put, expiration, stock price + sparkline
         # ============================================================
         control_frame = tk.Frame(root, bg=BG)
         control_frame.pack(fill="x", padx=30, pady=(24, 16))
@@ -153,13 +166,27 @@ class OptionsPricerApp:
         self.expiration_dates_combo.grid(row=0, column=5, sticky="w")
         self.expiration_dates_combo.bind("<<ComboboxSelected>>", lambda event: self.fetch_contracts())
 
-        # stock price display, right-aligned at the end of the control bar.
-        # grid_columnconfigure(..., weight=1) on column 6 makes that column absorb
-        # all the extra horizontal space, which is what pushes this label to the right edge
-        self.stock_price_var = tk.StringVar()
-        ttk.Label(control_frame, textvariable=self.stock_price_var, style="PriceHeader.TLabel")\
-            .grid(row=0, column=6, sticky="e")
+        # price_frame holds the sparkline (with its own "5D" caption above it)
+        # and the current price label together, right-aligned as one unit.
+        # grid_columnconfigure(..., weight=1) on column 6 makes that column
+        # absorb all the extra horizontal space, which is what pushes the
+        # whole group to the right edge of the control bar
+        price_frame = tk.Frame(control_frame, bg=BG)
+        price_frame.grid(row=0, column=6, sticky="e")
         control_frame.grid_columnconfigure(6, weight=1)
+
+        # a small vertical container so the "5D" caption sits above the
+        # canvas instead of overlapping the drawn chart
+        sparkline_container = tk.Frame(price_frame, bg=BG)
+        sparkline_container.pack(side="left", padx=(0, 12))
+
+        ttk.Label(sparkline_container, text="5D", style="Muted.TLabel", font=FONT_SMALL).pack(anchor="w")
+
+        self.sparkline_canvas = tk.Canvas(sparkline_container, width=170, height=50, bg=PANEL_BG, highlightthickness=0)
+        self.sparkline_canvas.pack()
+
+        self.stock_price_var = tk.StringVar()
+        ttk.Label(price_frame, textvariable=self.stock_price_var, style="PriceHeader.TLabel").pack(side="left")
 
         self.ticker_error_var = tk.StringVar()
         ttk.Label(control_frame, textvariable=self.ticker_error_var, style="Error.TLabel")\
@@ -341,8 +368,66 @@ class OptionsPricerApp:
                 self.stock_price_var.set(f"${self.s:.2f}")
             else:
                 self.stock_price_var.set("")
+
+            prices = get_price_history(self.ticker_var.get())
+            self.draw_sparkline(prices)
         else:
             self.stock_price_var.set("")
+            self.sparkline_canvas.delete("all")
+
+    def draw_sparkline(self, prices):
+        """
+        Draws a simple line chart on self.sparkline_canvas from a list of
+        prices, with faint horizontal reference lines at the period's high
+        and low, each labeled with its price.
+        """
+        self.sparkline_canvas.delete("all")  # clear any previously drawn chart
+
+        if len(prices) < 2:
+            return  # can't draw a meaningful line with 0 or 1 points
+
+        width = int(self.sparkline_canvas["width"])
+        height = int(self.sparkline_canvas["height"])
+        label_width = 42  # reserved space on the left for the high/low price labels
+        padding_x = 4     # keeps the line from touching the right edge
+        padding_y = 8     # keeps the line off the very top/bottom edges
+
+        low, high = min(prices), max(prices)
+        price_range = high - low if high != low else 1  # avoid divide-by-zero if price was flat
+
+        # the chart area is shifted right by label_width, leaving room on
+        # the left for the high/low price text
+        chart_left = label_width
+        chart_width = width - label_width - padding_x
+
+        def to_xy(i, price):
+            """Converts a (index, price) pair into an (x, y) pixel coordinate on the canvas."""
+            x = chart_left + (i / (len(prices) - 1)) * chart_width
+            # canvas y=0 is the TOP, so higher prices need to map to smaller y values
+            y = height - padding_y - ((price - low) / price_range) * (height - 2 * padding_y)
+            return x, y
+
+        # --- background: faint horizontal gridlines at the high and low, with labels ---
+        # feeding high/low straight into to_xy always lands them at the very
+        # top/bottom of the chart area, since they ARE the max/min
+        _, high_y = to_xy(0, high)
+        _, low_y = to_xy(0, low)
+
+        self.sparkline_canvas.create_line(chart_left, high_y, width, high_y, fill=GRID, width=1)
+        self.sparkline_canvas.create_line(chart_left, low_y, width, low_y, fill=GRID, width=1)
+
+        # anchor="w" anchors the text's left edge (not center) to the given
+        # point, so x=0 puts each label flush against the canvas's left edge
+        self.sparkline_canvas.create_text(0, high_y, text=f"{high:.1f}", fill=TEXT_DIM, font=FONT_SMALL, anchor="w")
+        self.sparkline_canvas.create_text(0, low_y, text=f"{low:.1f}", fill=TEXT_DIM, font=FONT_SMALL, anchor="w")
+
+        # --- foreground: the actual price line, drawn on top of the gridlines ---
+        # color the line green if price went up over the period, red if down
+        line_color = GOOD if prices[-1] >= prices[0] else ERROR
+        points = [to_xy(i, price) for i, price in enumerate(prices)]
+        # flatten [(x1,y1), (x2,y2), ...] into [x1,y1,x2,y2,...], the format create_line expects
+        flat_points = [coord for point in points for coord in point]
+        self.sparkline_canvas.create_line(*flat_points, fill=line_color, width=2, smooth=True)
 
     def on_ticker_change(self, *args):
         # *args catches tkinter's automatic arguments for trace callbacks, which we don't need here
@@ -484,11 +569,11 @@ class OptionsPricerApp:
 
         self.model_error_var.set("")
 
-        S = self.s                                              # current stock price
-        K = self.selected_strike                                # strike price of the selected contract
-        T = get_time_to_expiration(self.expiration_var.get())   # time to expiration, in years
-        r = get_risk_free_rate()                                 # current risk-free rate
-        option_type = self.option_type.get()                     # "Call" or "Put"
+        S = self.s                                               # current stock price
+        K = self.selected_strike                                 # strike price of the selected contract
+        T = get_time_to_expiration(self.expiration_var.get())     # time to expiration, in years
+        r = get_risk_free_rate()                                  # current risk-free rate
+        option_type = self.option_type.get()                      # "Call" or "Put"
 
         # yfinance's implied volatility is sometimes unreliable (as low as 0
         # for some tickers/contracts), which would break the Black-Scholes
