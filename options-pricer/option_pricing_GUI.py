@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 import numpy as np
 import scipy as sc
+from collections import namedtuple
 
 
 # ============================================================
@@ -84,14 +85,24 @@ def black_scholes_price(S, K, T, r, sigma, option_type):
     d1 = (np.log(S/K) + (r + (sigma**2)/2) * T) / (sigma * (T**0.5))
     d2 = d1 - sigma * (T**0.5)
 
+    gamma = sc.stats.norm.pdf(d1) / (S * sigma * (T**0.5))
+    vega = S * sc.stats.norm.pdf(d1) * (T**0.5)
+
     if option_type == "Call":
         price = S * sc.stats.norm.cdf(d1) - K * np.exp(-r * T) * sc.stats.norm.cdf(d2)
+        delta = sc.stats.norm.cdf(d1)
+        theta = -(S * sc.stats.norm.pdf(d1) * sigma) / (2 * (T**0.5)) - r * K * np.exp(-r*T) * sc.stats.norm.cdf(d2)
+        rho = K * T * np.exp(-r*T) * sc.stats.norm.cdf(d2)
     elif option_type == "Put":
         price = K*np.exp(-r*T)*sc.stats.norm.cdf(-d2) - S*sc.stats.norm.cdf(-d1)
+        delta = sc.stats.norm.cdf(d1) - 1
+        theta = -(S * sc.stats.norm.pdf(d1) * sigma) / (2 * (T**0.5)) + r * K * np.exp(-r*T) * sc.stats.norm.cdf(-d2)
+        rho = -K * T * np.exp(-r*T) * sc.stats.norm.cdf(-d2)
     else:
         return "Option Value Error"
 
-    return price
+    calculations = BSResult(price=price, delta=delta, gamma=gamma, vega=vega, theta=theta, rho=rho)
+    return calculations
 
 
 # --- Dark theme palette, defined once so every color reference below stays
@@ -111,6 +122,8 @@ FONT_BOLD = ("Helvetica Neue", 13, "bold")
 FONT_LARGE = ("Helvetica Neue", 22, "bold")
 FONT_HEADING = ("Helvetica Neue", 12, "bold")
 FONT_SMALL = ("Helvetica Neue", 8)
+
+BSResult = namedtuple("BSResult", ["price", "delta", "gamma", "vega", "theta", "rho"])
 
 
 class OptionsPricerApp:
@@ -273,6 +286,26 @@ class OptionsPricerApp:
         # widget, because calculate_model_price needs to change its color later
         self.difference_label = ttk.Label(inner, textvariable=self.difference_var, style="ResultValue.TLabel")
         self.difference_label.grid(row=1, column=3, sticky="w")
+
+        self.delta_var = tk.StringVar(value="—")
+        self.gamma_var = tk.StringVar(value="—")
+        self.vega_var = tk.StringVar(value="—")
+        self.theta_var = tk.StringVar(value="—")
+        self.rho_var = tk.StringVar(value="—")
+
+        inner.grid_columnconfigure(4, weight=1)
+
+        ttk.Label(inner, text="Δ", style="ResultLabel.TLabel").grid(row=0, column=5, sticky="w", padx=(0, 24))
+        ttk.Label(inner, text="Γ", style="ResultLabel.TLabel").grid(row=0, column=6, sticky="w", padx=(0, 24))
+        ttk.Label(inner, text="V", style="ResultLabel.TLabel").grid(row=0, column=7, sticky="w", padx=(0, 24))
+        ttk.Label(inner, text="Θ", style="ResultLabel.TLabel").grid(row=0, column=8, sticky="w", padx=(0, 24))
+        ttk.Label(inner, text="ρ", style="ResultLabel.TLabel").grid(row=0, column=9, sticky="w")
+
+        ttk.Label(inner, textvariable=self.delta_var, style="ResultValue.TLabel").grid(row=1, column=5, sticky="e", padx=(0, 24))
+        ttk.Label(inner, textvariable=self.gamma_var, style="ResultValue.TLabel").grid(row=1, column=6, sticky="e", padx=(0, 24))
+        ttk.Label(inner, textvariable=self.vega_var, style="ResultValue.TLabel").grid(row=1, column=7, sticky="e", padx=(0, 24))
+        ttk.Label(inner, textvariable=self.theta_var, style="ResultValue.TLabel").grid(row=1, column=8, sticky="e", padx=(0, 24))
+        ttk.Label(inner, textvariable=self.rho_var, style="ResultValue.TLabel").grid(row=1, column=9, sticky="e")
 
         # these three lines force the window to the front and grab focus on launch,
         # then release "always on top" so it doesn't stay pinned above everything forever
@@ -533,6 +566,11 @@ class OptionsPricerApp:
         self.market_price_var.set("—")
         self.difference_var.set("—")
         self.model_error_var.set("")
+        self.delta_var.set("—")
+        self.gamma_var.set("—")
+        self.vega_var.set("—")
+        self.theta_var.set("—")
+        self.rho_var.set("—")
 
     def sort_by_column(self, col):
         """
@@ -584,14 +622,19 @@ class OptionsPricerApp:
         else:
             sigma = self.selected_implied_volatility
 
-        model_price = black_scholes_price(S, K, T, r, sigma, option_type)
-        self.model_price_var.set(f"${model_price:.2f}")
+        calculations = black_scholes_price(S, K, T, r, sigma, option_type)
+        self.model_price_var.set(f"${calculations.price:.2f}")
+        self.delta_var.set(f"{calculations.delta:.2f}")
+        self.gamma_var.set(f"{calculations.gamma:.4f}")
+        self.vega_var.set(f"${calculations.vega:.2f}")
+        self.theta_var.set(f"{(calculations.theta / 365):.2f}")
+        self.rho_var.set(f"${calculations.rho:.1f}")
 
         # market price is approximated as the midpoint between bid and ask,
         # since it's a more reliable live estimate than lastPrice (which can
         # be stale if the contract hasn't traded recently)
         market_price = (self.selected_bid + self.selected_ask) / 2
-        difference = model_price - market_price
+        difference = calculations.price - market_price
         percent_difference = (difference / market_price) * 100
 
         # sign is computed once and used for both the dollar and percent
@@ -606,6 +649,7 @@ class OptionsPricerApp:
         # colors the difference green if the model thinks the contract is
         # underpriced (model > market), red if overpriced
         self.difference_label.configure(foreground=GOOD if difference >= 0 else ERROR)
+
 
     def close_app(self, event=None):
         self.root.destroy()
