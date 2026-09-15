@@ -1,61 +1,44 @@
-# Options Pricer (Black-Scholes)
+# Options Pricer
 
-A command-line tool that prices options using the Black-Scholes model and compares the result against real market prices pulled from Yahoo Finance.
+A Black-Scholes options pricer with a live tkinter GUI. Pulls real option chains from Yahoo Finance, compares the model price against the current market price, and displays the full set of Greeks for the selected contract.
 
-## What it does
+## Features
 
-1. Takes a stock ticker, expiration date, and option type (call or put) from the user
-2. Pulls the live options chain for that expiration using `yfinance`
-3. Filters for liquid contracts (nonzero trading volume) and selects the strike closest to the current stock price (at-the-money)
-4. Calculates historical volatility from 6 months of daily closing prices
-5. Prices the selected option using the Black-Scholes formula
-6. Compares the model price against the actual market price and reports the difference
+- **Live data**: fetches the current stock price, option chains, and expiration dates for any valid ticker via `yfinance`.
+- **Call/Put selection**: toggle between calls and puts, with expiration dates and the contracts table updating accordingly.
+- **Sortable contracts table**: strike, last price, bid, ask, volume, and implied volatility for every contract in the selected expiration, sortable by column.
+- **Black-Scholes pricing**: computes the model price for the selected contract using the current risk-free rate (13-week Treasury yield, `^IRX`) and either implied volatility or, when implied volatility is unreliable (below 5%), a 6-month historical volatility fallback.
+- **Full Greeks**: Delta, Gamma, Vega, Theta, and Rho, computed alongside price and returned together as a single `BSResult` object.
+- **Market comparison**: shows the model price, the bid-ask midpoint as the market price estimate, and the dollar/percent difference between them, color-coded by whether the model considers the contract under- or overpriced.
+- **5-day sparkline**: a small chart of recent price action next to the current stock price.
+- **Dark trading-terminal theme**: custom `ttk` styling across all widgets.
 
-## Why historical volatility instead of implied volatility
+## How it works
 
-Black-Scholes requires a volatility input (sigma). The natural choice would be the market's own implied volatility, which Yahoo Finance provides in its options data. In practice, this field was unreliable during development: it frequently returned near-zero placeholder values (0.00001) regardless of the actual option, a known issue with Yahoo's data feed rather than a bug in this script.
-
-To work around this, the model calculates its own historical volatility from the stock's trailing 6-month daily returns, annualized using the standard `sqrt(252)` convention. This has a real tradeoff: historical volatility is backward-looking, while the market's pricing reflects forward-looking expectations. The comparison this script produces is therefore not "is my formula right" in isolation, but "how well does trailing historical volatility approximate the market's actual pricing."
-
-## Why liquidity filtering matters
-
-Options with zero trading volume often have stale `lastPrice` values, sometimes from trades days old, that don't reflect current fair value. Comparing a model price against a stale market price produces a meaningless gap that looks like model error but isn't. The script filters to contracts with nonzero volume before selecting a strike, and prompts for a different expiration date if none are found.
-
-This distinction showed up clearly during testing. On Take-Two Interactive (TTWO), an underlying name with a thin options market, model-to-market gaps of 30%+ persisted even after filtering, and every available contract showed a zero bid and zero ask, indicating no active market maker quote at all. On Apple (AAPL), a heavily-traded name, the same approach produced a gap of roughly 1-3% depending on the expiration chosen. The difference is not a flaw in the model; it reflects how much weight a "market price" comparison can actually bear given the underlying liquidity.
-
-## Results
-
-Example run, AAPL, near-term liquid call option:
-
-- Market price: $9.95
-- Model price (Black-Scholes, historical volatility): $10.30
-- Difference: -3.51%
-
-Example run, AAPL, November expiration:
-
-- Difference: 1.19%
-
-## Known limitations
-
-- Black-Scholes assumes European-style exercise (exercisable only at expiration). US equity options are American-style (exercisable anytime), which can cause small pricing discrepancies, particularly for puts and dividend-paying stocks.
-- The risk-free rate is currently a fixed approximation (5%) rather than pulled from a live source.
-- Historical volatility is calculated over a fixed 6-month window regardless of the option's time to expiration; a closer match between the volatility lookback period and the option's remaining life would likely improve accuracy.
-- Volatility skew (the tendency for implied volatility to vary by strike, rather than stay constant as Black-Scholes assumes) is visible in the data but not modeled here.
+1. Enter a ticker and select Call or Put.
+2. Choose an expiration date; the contracts table populates automatically.
+3. Select a contract row, then click **Calculate Model Price**.
+4. The app computes:
+   - `d1` and `d2` from the Black-Scholes formula
+   - Model price (Call or Put, depending on selection)
+   - Delta, Gamma, Vega, Theta, Rho
+5. Results are displayed in the results panel: price/market/difference on the left, Greeks (Δ, Γ, V, Θ, ρ) right-aligned.
 
 ## Requirements
 
-```
-pip install numpy scipy yfinance
-```
+- Python 3.11+
+- `numpy`
+- `scipy`
+- `yfinance`
+- `tkinter` (on macOS, the system Python's bundled Tk can be too old to render widgets correctly — install via `brew install python-tk@3.11` if the GUI fails to display)
 
-## Usage
+## Notes
 
-```
-python options_pricer.py
-```
+- Theta is displayed as decay per day (raw formula output, which is per year, divided by 365).
+- Vega and Rho are dollar-denominated (price sensitivity per 1% change in volatility or interest rates); Delta and Gamma are shown as plain ratios.
+- Model vs. market difference is not itself a trading signal; it reflects deviation from the Black-Scholes assumptions, not mispricing in a strict sense.
 
-Follow the prompts: enter a ticker, choose an expiration date from the printed list, choose call or put. The script validates each input and will re-prompt on invalid entries or expirations with no liquid contracts.
+## Roadmap
 
-## Next steps
-
-A GUI version of this tool, built with tkinter, is in progress to replace the terminal-based input/output with an interactive window.
+- Link the model-vs-market price difference to a probability-of-profit estimate for a given contract, potentially using Delta as an ITM-probability proxy.
+- Weight/discount that estimate by contract liquidity (volume, bid-ask spread).
