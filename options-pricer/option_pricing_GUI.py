@@ -3,10 +3,8 @@ import yfinance as yf
 from tkinter import ttk
 import subprocess
 import os
-from datetime import datetime
-import numpy as np
-import scipy as sc
-from collections import namedtuple
+from black_scholes import black_scholes_price
+from market_data import get_historical_volatility, get_risk_free_rate, get_time_to_expiration
 
 
 # ============================================================
@@ -15,51 +13,6 @@ from collections import namedtuple
 # so they live outside the class and just take plain arguments in,
 # plain values out.
 # ============================================================
-
-def get_risk_free_rate():
-    """
-    Fetches the current 13-week Treasury bill yield (^IRX) as a proxy
-    for the risk-free rate used in Black-Scholes. yfinance returns this
-    as a percentage (e.g. 5.3 meaning 5.3%), so we divide by 100 to get
-    the decimal form the formula expects (0.053). If the fetch fails for
-    any reason, fall back to a reasonable constant instead of crashing.
-    """
-    irx = yf.Ticker("^IRX")
-    rate = irx.info.get("regularMarketPrice", None)
-    return rate / 100 if rate is not None else 0.05
-
-
-def get_time_to_expiration(expiration_date_str):
-    """
-    Converts an expiration date string (e.g. "2026-09-25") into the
-    number of years remaining until that date — the "T" input Black-Scholes
-    expects. strptime parses the string into a real datetime using the
-    format that matches how yfinance formats its dates. Subtracting two
-    datetimes gives a timedelta, and .days pulls the whole number of days
-    out of it. Dividing by 365 converts days into fractional years.
-    """
-    expiration_date = datetime.strptime(expiration_date_str, "%Y-%m-%d")
-    days_remaining = (expiration_date - datetime.now()).days
-    return days_remaining / 365
-
-
-def get_historical_volatility(ticker_symbol):
-    """
-    Fallback volatility calculation, used when yfinance's implied
-    volatility is too low/unreliable to trust (see calculate_model_price).
-    Pulls 6 months of daily closing prices, computes daily percentage
-    returns, then annualizes the standard deviation of those returns
-    (252 = average number of trading days in a year) to get a volatility
-    figure comparable to implied volatility.
-    """
-    hist = yf.download(ticker_symbol, period="6mo", interval="1d")
-    closes = hist["Close"].values.flatten()
-
-    daily_returns = np.diff(closes) / closes[:-1]
-    historical_volatility = np.std(daily_returns) * np.sqrt(252)
-
-    return historical_volatility
-
 
 def get_price_history(ticker_symbol, period="5d", interval="30m"):
     """
@@ -70,39 +23,6 @@ def get_price_history(ticker_symbol, period="5d", interval="30m"):
     hist = yf.download(ticker_symbol, period=period, interval=interval, progress=False)
     closes = hist["Close"].values.flatten()
     return closes
-
-
-def black_scholes_price(S, K, T, r, sigma, option_type):
-    """
-    The Black-Scholes formula itself.
-    S = current stock price, K = strike price, T = time to expiration
-    (in years), r = risk-free rate, sigma = volatility, option_type =
-    "Call" or "Put". d1/d2 are intermediate values the formula is built
-    from; norm.cdf is the cumulative distribution function of the
-    standard normal distribution, which is what turns d1/d2 into
-    probabilities the formula uses to arrive at a price.
-    """
-    d1 = (np.log(S/K) + (r + (sigma**2)/2) * T) / (sigma * (T**0.5))
-    d2 = d1 - sigma * (T**0.5)
-
-    gamma = sc.stats.norm.pdf(d1) / (S * sigma * (T**0.5))
-    vega = S * sc.stats.norm.pdf(d1) * (T**0.5)
-
-    if option_type == "Call":
-        price = S * sc.stats.norm.cdf(d1) - K * np.exp(-r * T) * sc.stats.norm.cdf(d2)
-        delta = sc.stats.norm.cdf(d1)
-        theta = -(S * sc.stats.norm.pdf(d1) * sigma) / (2 * (T**0.5)) - r * K * np.exp(-r*T) * sc.stats.norm.cdf(d2)
-        rho = K * T * np.exp(-r*T) * sc.stats.norm.cdf(d2)
-    elif option_type == "Put":
-        price = K*np.exp(-r*T)*sc.stats.norm.cdf(-d2) - S*sc.stats.norm.cdf(-d1)
-        delta = sc.stats.norm.cdf(d1) - 1
-        theta = -(S * sc.stats.norm.pdf(d1) * sigma) / (2 * (T**0.5)) + r * K * np.exp(-r*T) * sc.stats.norm.cdf(-d2)
-        rho = -K * T * np.exp(-r*T) * sc.stats.norm.cdf(-d2)
-    else:
-        return "Option Value Error"
-
-    calculations = BSResult(price=price, delta=delta, gamma=gamma, vega=vega, theta=theta, rho=rho)
-    return calculations
 
 
 # --- Dark theme palette, defined once so every color reference below stays
@@ -122,8 +42,6 @@ FONT_BOLD = ("Helvetica Neue", 13, "bold")
 FONT_LARGE = ("Helvetica Neue", 22, "bold")
 FONT_HEADING = ("Helvetica Neue", 12, "bold")
 FONT_SMALL = ("Helvetica Neue", 8)
-
-BSResult = namedtuple("BSResult", ["price", "delta", "gamma", "vega", "theta", "rho"])
 
 
 class OptionsPricerApp:
