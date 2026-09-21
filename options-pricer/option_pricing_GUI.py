@@ -183,11 +183,11 @@ class OptionsPricerApp:
             bg=ACCENT, fg="#0a0a0a", activebackground="#6ea1ff", activeforeground="#0a0a0a",
             font=FONT_BOLD, relief="flat", cursor="hand2", padx=18, pady=10, bd=0,
         )
-        self.calculate_button.grid(row=0, column=0, rowspan=3, sticky="w", padx=(0, 40))
+        self.calculate_button.grid(row=0, column=0, rowspan=4, sticky="w", padx=(0, 40))
 
         self.model_error_var = tk.StringVar()
         ttk.Label(inner, textvariable=self.model_error_var, style="Error.TLabel")\
-            .grid(row=0, column=0, rowspan=3, sticky="w", padx=(220, 0))
+            .grid(row=0, column=0, rowspan=4, sticky="w", padx=(220, 0))
 
         # column headers for the three result values
         ttk.Label(inner, text="MODEL PRICE", style="ResultLabel.TLabel").grid(row=0, column=1, sticky="w", padx=(0, 60))
@@ -211,6 +211,8 @@ class OptionsPricerApp:
         self.vega_var = tk.StringVar(value="—")
         self.theta_var = tk.StringVar(value="—")
         self.rho_var = tk.StringVar(value="—")
+        self.prob_var = tk.StringVar(value="—")
+        self.xprof_var = tk.StringVar(value="—")
 
         inner.grid_columnconfigure(4, weight=1)
 
@@ -220,12 +222,18 @@ class OptionsPricerApp:
         ttk.Label(inner, text="Θ", style="ResultLabel.TLabel").grid(row=0, column=8, sticky="w", padx=(0, 24))
         ttk.Label(inner, text="ρ", style="ResultLabel.TLabel").grid(row=0, column=9, sticky="w")
 
+        ttk.Label(inner, text="PROB. OF PROFIT", style="ResultLabel.TLabel").grid(row=2, column=1, sticky="w", padx=(0, 24))
+        ttk.Label(inner, text="EXP. PROFIT", style="ResultLabel.TLabel").grid(row=2, column=2, sticky="w", padx=(0, 24))
+
         ttk.Label(inner, textvariable=self.delta_var, style="ResultValue.TLabel").grid(row=1, column=5, sticky="e", padx=(0, 24))
         ttk.Label(inner, textvariable=self.gamma_var, style="ResultValue.TLabel").grid(row=1, column=6, sticky="e", padx=(0, 24))
         ttk.Label(inner, textvariable=self.vega_var, style="ResultValue.TLabel").grid(row=1, column=7, sticky="e", padx=(0, 24))
         ttk.Label(inner, textvariable=self.theta_var, style="ResultValue.TLabel").grid(row=1, column=8, sticky="e", padx=(0, 24))
         ttk.Label(inner, textvariable=self.rho_var, style="ResultValue.TLabel").grid(row=1, column=9, sticky="e")
 
+        ttk.Label(inner, textvariable=self.prob_var, style="ResultValue.TLabel").grid(row=3, column=1, sticky="w", padx=(0, 24))
+        self.xprof_label = ttk.Label(inner, textvariable=self.xprof_var, style="ResultValue.TLabel")
+        self.xprof_label.grid(row=3, column=2, sticky="w", padx=(0, 24))
         # these three lines force the window to the front and grab focus on launch,
         # then release "always on top" so it doesn't stay pinned above everything forever
         root.lift()
@@ -491,6 +499,9 @@ class OptionsPricerApp:
         self.theta_var.set("—")
         self.rho_var.set("—")
 
+        self.prob_var.set("—")
+        self.xprof_var.set("—")
+
     def sort_by_column(self, col):
         """
         Sorts the table's rows by the clicked column, toggling between
@@ -541,14 +552,21 @@ class OptionsPricerApp:
         else:
             sigma = self.selected_implied_volatility
 
-        # I would do the profitability here
         premium = self.selected_ask
         result = probability_of_profits(S, K, T, r, sigma, premium, option_type)
         if result is None or premium == 0:
             prob, xprof = None, None
+            self.prob_var.set("N/A")
+            self.xprof_var.set("N/A")
+            self.xprof_label.configure(foreground=TEXT)
         else:
             prob, xprof = result
-            
+            sign_xprof = "+" if xprof >=0 else "-"
+            self.xprof_var.set(f"{sign_xprof}${abs(xprof):.2f}")
+
+            self.prob_var.set(f"{prob * 100:.1f}%")
+            self.xprof_label.configure(foreground=GOOD if xprof >=0 else ERROR)
+
 
         calculations = black_scholes_price(S, K, T, r, sigma, option_type)
         self.model_price_var.set(f"${calculations.price:.2f}")
@@ -558,6 +576,7 @@ class OptionsPricerApp:
         self.theta_var.set(f"{(calculations.theta / 365):.2f}")
         self.rho_var.set(f"${calculations.rho:.1f}")
 
+    
         # market price is approximated as the midpoint between bid and ask,
         # since it's a more reliable live estimate than lastPrice (which can
         # be stale if the contract hasn't traded recently)
@@ -567,13 +586,13 @@ class OptionsPricerApp:
 
         # sign is computed once and used for both the dollar and percent
         # figures, so they always agree with each other
-        sign = "+" if difference >= 0 else "-"
+        sign_diff = "+" if difference >= 0 else "-"
 
         self.market_price_var.set(f"${market_price:.2f}")
         # abs(...) strips the sign from the raw numbers so `sign` (already
         # applied out front) is the only minus/plus shown — without abs()
         # here, a negative difference would double up as "-$-0.28"
-        self.difference_var.set(f"{sign}${abs(difference):.2f} ({sign}{abs(percent_difference):.1f}%)")
+        self.difference_var.set(f"{sign_diff}${abs(difference):.2f} ({sign_diff}{abs(percent_difference):.1f}%)")
         # colors the difference green if the model thinks the contract is
         # underpriced (model > market), red if overpriced
         self.difference_label.configure(foreground=GOOD if difference >= 0 else ERROR)
