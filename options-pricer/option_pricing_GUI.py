@@ -5,6 +5,7 @@ import subprocess
 import os
 from black_scholes import black_scholes_price
 from market_data import get_historical_volatility, get_risk_free_rate, get_time_to_expiration
+from profitability import probability_of_profits
 
 
 # ============================================================
@@ -539,6 +540,15 @@ class OptionsPricerApp:
             sigma = get_historical_volatility(self.ticker_var.get())
         else:
             sigma = self.selected_implied_volatility
+
+        # I would do the profitability here
+        premium = self.selected_ask
+        result = probability_of_profits(S, K, T, r, sigma, premium, option_type)
+        if result is None or premium == 0:
+            prob, xprof = None, None
+        else:
+            prob, xprof = result
+            
 
         calculations = black_scholes_price(S, K, T, r, sigma, option_type)
         self.model_price_var.set(f"${calculations.price:.2f}")
